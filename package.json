@@ -1,0 +1,21 @@
+{
+  "name": "ralphbox",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "prepare": "git config --local core.hooksPath .githooks",
+    "cli": "bun run --filter @ralphbox/cli build:agent > /dev/null && bun run packages/cli/src/cli.ts",
+    "format": "oxfmt .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.8",
+    "oxfmt": "0.27.0",
+    "turbo": "2.8.0"
+  },
+  "packageManager": "bun@1.3.8"
+}

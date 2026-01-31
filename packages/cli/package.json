@@ -1,0 +1,23 @@
+{
+  "name": "@ralphbox/cli",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "build:agent": "bun build --compile --target=bun-linux-x64 src/agent.ts --outfile dist/agent",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.29",
+    "@vercel/sandbox": "^1.4.1",
+    "ai": "^6.0.66",
+    "ai-sdk-provider-claude-code": "^3.3.5",
+    "ai-sdk-provider-codex-cli": "^1.0.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.8",
+    "typescript": "5.9.3"
+  }
+}
