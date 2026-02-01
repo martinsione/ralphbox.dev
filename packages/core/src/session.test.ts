@@ -1,17 +1,11 @@
-import {
-  createSession,
-  appendChunk,
-  updateSession,
-  getSession,
-  listSessions,
-} from "@ralphbox/core/session";
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createSession, appendChunk, updateSession, getSession, listSessions } from "./session.ts";
 
-const STORAGE_DIR = join(homedir(), ".ralphbox");
-const BACKUP_DIR = join(homedir(), ".ralphbox-backup");
+const STORAGE_DIR = join(homedir(), ".ralphbox", "sessions");
+const BACKUP_DIR = join(homedir(), ".ralphbox-sessions-backup");
 
 describe("session", () => {
   beforeEach(async () => {
@@ -38,7 +32,7 @@ describe("session", () => {
   test("createSession creates a new session file", async () => {
     const session = await createSession("claude");
 
-    expect(session.id).toMatch(/^session-/);
+    expect(session.id).toMatch(/^[0-9a-zA-Z]{8}$/);
     expect(session.status).toBe("created");
     expect(session.agent).toBe("claude");
     expect(session.messages).toEqual([]);

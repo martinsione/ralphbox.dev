@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { app } from "./server.ts";
 
-const STORAGE_DIR = join(homedir(), ".ralphbox");
-const BACKUP_DIR = join(homedir(), ".ralphbox-backup");
+const STORAGE_DIR = join(homedir(), ".ralphbox", "sessions");
+const BACKUP_DIR = join(homedir(), ".ralphbox-sessions-backup");
 
 describe("server API", () => {
   beforeEach(async () => {
@@ -89,7 +89,7 @@ describe("server API", () => {
 
       expect(res.status).toBe(200);
       const session = (await res.json()) as { id: string; agent: string; status: string };
-      expect(session.id).toMatch(/^session-/);
+      expect(session.id).toMatch(/^[0-9a-zA-Z]{8}$/);
       expect(session.agent).toBe("claude");
       expect(session.status).toBe("created");
     });

@@ -1,20 +1,28 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { SessionsProvider } from "@/hooks/use-sessions";
 import { Home } from "@/pages/home";
 import "@/index.css";
 
-const el = document.getElementById("root")!;
+const root = document.getElementById("root")!;
+
 const app = (
   <StrictMode>
-    <Home />
+    <BrowserRouter>
+      <SessionsProvider>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/s/:sessionId" element={<Home />} />
+        </Routes>
+      </SessionsProvider>
+    </BrowserRouter>
   </StrictMode>
 );
 
 if (import.meta.hot) {
-  // With hot module reloading, `import.meta.hot.data` is persisted.
-  const root = (import.meta.hot.data.root ??= createRoot(el));
-  root.render(app);
+  const reactRoot = (import.meta.hot.data.root ??= createRoot(root));
+  reactRoot.render(app);
 } else {
-  // The hot module reloading API is not available in production.
-  createRoot(el).render(app);
+  createRoot(root).render(app);
 }

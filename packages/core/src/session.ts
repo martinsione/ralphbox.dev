@@ -1,3 +1,4 @@
+import { customAlphabet } from "nanoid";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -5,27 +6,29 @@ import type { AgentType, AnyStreamChunk, Session, SessionSummary } from "./types
 
 export type { Session, SessionSummary };
 
-const STORAGE_DIR = join(homedir(), ".ralphbox");
+const SESSIONS_DIR = join(homedir(), ".ralphbox", "sessions");
 
 type StreamState = {
   currentMessageId: string | null;
   activeTextParts: Record<string, { index: number }>;
 };
 
+const nanoid = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", 8);
+
 function generateId(): string {
-  return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return nanoid();
 }
 
 async function ensureStorageDir(): Promise<void> {
-  await mkdir(STORAGE_DIR, { recursive: true });
+  await mkdir(SESSIONS_DIR, { recursive: true });
 }
 
 function sessionPath(id: string): string {
-  return join(STORAGE_DIR, `${id}.json`);
+  return join(SESSIONS_DIR, `${id}.json`);
 }
 
 function statePath(sessionId: string): string {
-  return join(STORAGE_DIR, `${sessionId}.state.json`);
+  return join(SESSIONS_DIR, `${sessionId}.state.json`);
 }
 
 export async function createSession(agent: AgentType): Promise<Session> {
@@ -146,10 +149,10 @@ export async function listSessions(): Promise<SessionSummary[]> {
   const glob = new Bun.Glob("*.json");
   const sessions: SessionSummary[] = [];
 
-  for await (const file of glob.scan(STORAGE_DIR)) {
+  for await (const file of glob.scan(SESSIONS_DIR)) {
     if (file.endsWith(".state.json")) continue;
     try {
-      const content = await Bun.file(join(STORAGE_DIR, file)).text();
+      const content = await Bun.file(join(SESSIONS_DIR, file)).text();
       const session = JSON.parse(content);
       // Don't include messages in list to keep it light
       const { messages, ...rest } = session;
