@@ -21,6 +21,8 @@ type StreamState = {
   currentMessageId: string | null;
   activeParts: Record<string, { partId: string }>;
   toolInputBuffers: Record<string, string>;
+  messageIndex: number;
+  partIndex: number;
 };
 
 const nanoid = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", 8);
@@ -83,7 +85,15 @@ export async function listParts(sessionId: string, messageId: string): Promise<M
       const content = await Bun.file(join(dir, file)).text();
       parts.push(JSON.parse(content));
     }
-    return parts;
+    return parts.sort((a, b) => {
+      const orderA = a.order ?? 0;
+      const orderB = b.order ?? 0;
+      if (orderA !== orderB) return orderA - orderB;
+      const timeA = a.createdAt ?? 0;
+      const timeB = b.createdAt ?? 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return a.id.localeCompare(b.id);
+    });
   } catch {
     return [];
   }
@@ -133,6 +143,8 @@ export async function createSession(agent: AgentType): Promise<Session> {
     currentMessageId: null,
     activeParts: {},
     toolInputBuffers: {},
+    messageIndex: 0,
+    partIndex: 0,
   };
 
   await Promise.all([
@@ -140,6 +152,8 @@ export async function createSession(agent: AgentType): Promise<Session> {
     Bun.write(statePath(session.id), JSON.stringify(state)),
     mkdir(sessionDir(session.id), { recursive: true }),
   ]);
+
+  publish({ type: "session.created", properties: { sessionId: session.id } });
 
   return session;
 }
@@ -153,11 +167,15 @@ async function handleTextLikeStart(
   if (!state.currentMessageId) return;
 
   const partId = generateId();
+  const now = Date.now();
+  const order = (state.partIndex += 1);
   const part: MessagePart = {
     id: partId,
     messageId: state.currentMessageId,
     type: partType,
     text: "",
+    createdAt: now,
+    order,
   };
 
   state.activeParts[chunkId] = { partId };
@@ -209,17 +227,28 @@ async function finalizeToolPart(
 export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Promise<void> {
   const sPath = statePath(sessionId);
   const stateContent = await Bun.file(sPath).text();
-  const state: StreamState = JSON.parse(stateContent);
+  const rawState = JSON.parse(stateContent) as Partial<StreamState>;
+  const state: StreamState = {
+    currentMessageId: rawState.currentMessageId ?? null,
+    activeParts: rawState.activeParts ?? {},
+    toolInputBuffers: rawState.toolInputBuffers ?? {},
+    messageIndex: rawState.messageIndex ?? 0,
+    partIndex: rawState.partIndex ?? 0,
+  };
 
   switch (chunk.type) {
     case "start": {
       const messageId = chunk.messageId || generateId();
       state.currentMessageId = messageId;
+      const now = Date.now();
+      const order = (state.messageIndex += 1);
 
       const message: UIMessage = {
         id: messageId,
         role: "assistant",
         parts: [],
+        createdAt: now,
+        order,
       };
 
       await writeMessage(sessionId, { ...message, partIds: [] });
@@ -257,6 +286,8 @@ export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Pro
       if (!state.currentMessageId) break;
 
       const partId = generateId();
+      const now = Date.now();
+      const order = (state.partIndex += 1);
       const toolState: ToolState = {
         status: "pending",
         input: {},
@@ -270,6 +301,8 @@ export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Pro
         callId: chunk.id,
         toolName: chunk.toolName,
         state: toolState,
+        createdAt: now,
+        order,
       };
 
       state.activeParts[chunk.id] = { partId };
@@ -322,6 +355,8 @@ export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Pro
 
       const id = chunk.toolCallId;
       const partId = generateId();
+      const now = Date.now();
+      const order = (state.partIndex += 1);
       const toolState: ToolState = {
         status: "running",
         input: chunk.input,
@@ -335,6 +370,8 @@ export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Pro
         callId: id,
         toolName: chunk.toolName,
         state: toolState,
+        createdAt: now,
+        order,
       };
 
       state.activeParts[id] = { partId };
@@ -394,8 +431,20 @@ export async function getSession(sessionId: string): Promise<Session | null> {
       id: messageMeta.id,
       role: messageMeta.role,
       parts,
+      createdAt: messageMeta.createdAt,
+      order: messageMeta.order,
     });
   }
+
+  messages.sort((a, b) => {
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) return orderA - orderB;
+    const timeA = a.createdAt ?? 0;
+    const timeB = b.createdAt ?? 0;
+    if (timeA !== timeB) return timeA - timeB;
+    return a.id.localeCompare(b.id);
+  });
 
   return { ...sessionMeta, messages };
 }
@@ -445,18 +494,25 @@ export async function migrateV1ToV2(): Promise<void> {
 
       await mkdir(dir, { recursive: true });
 
+      let messageOrder = 0;
       for (const message of session.messages) {
         const partIds: string[] = [];
+        let partOrder = 0;
+        messageOrder += 1;
 
         if (message.parts && Array.isArray(message.parts)) {
           for (const oldPart of message.parts) {
             const partId = generateId();
             partIds.push(partId);
+            partOrder += 1;
 
             const newPart: MessagePart = {
+              ...oldPart,
               id: partId,
               messageId: message.id,
-              ...oldPart,
+              order: partOrder,
+              createdAt:
+                typeof oldPart.createdAt === "number" ? oldPart.createdAt : Date.now() + partOrder,
             };
 
             await writePart(sessionId, newPart);
@@ -467,6 +523,9 @@ export async function migrateV1ToV2(): Promise<void> {
           id: message.id,
           role: message.role,
           partIds,
+          order: messageOrder,
+          createdAt:
+            typeof message.createdAt === "number" ? message.createdAt : Date.now() + messageOrder,
         });
       }
 

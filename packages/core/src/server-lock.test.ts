@@ -37,8 +37,10 @@ describe("server-lock", () => {
     const lock = JSON.parse(content);
 
     expect(lock.port).toBe(8642);
+    expect(lock.hostname).toBe("127.0.0.1");
     expect(lock.pid).toBe(process.pid);
     expect(lock.startedAt).toBeGreaterThan(0);
+    expect(lock.authRequired).toBe(false);
   });
 
   test("readLock returns lock contents", async () => {
@@ -48,6 +50,7 @@ describe("server-lock", () => {
     expect(lock).not.toBeNull();
     expect(lock!.port).toBe(8642);
     expect(lock!.pid).toBe(process.pid);
+    expect(lock!.hostname).toBe("127.0.0.1");
   });
 
   test("readLock returns null when no lock file exists", async () => {
@@ -79,7 +82,16 @@ describe("server-lock", () => {
   test("isServerRunning returns false when PID is dead", async () => {
     // Write a lock file with a non-existent PID
     await mkdir(RALPHBOX_DIR, { recursive: true });
-    await Bun.write(LOCK_FILE, JSON.stringify({ port: 8642, pid: 99999, startedAt: Date.now() }));
+    await Bun.write(
+      LOCK_FILE,
+      JSON.stringify({
+        port: 8642,
+        hostname: "127.0.0.1",
+        pid: 99999,
+        startedAt: Date.now(),
+        authRequired: false,
+      }),
+    );
 
     const status = await isServerRunning();
     expect(status.running).toBe(false);
@@ -93,7 +105,13 @@ describe("server-lock", () => {
     await mkdir(RALPHBOX_DIR, { recursive: true });
     await Bun.write(
       LOCK_FILE,
-      JSON.stringify({ port: 59999, pid: process.pid, startedAt: Date.now() }),
+      JSON.stringify({
+        port: 59999,
+        hostname: "127.0.0.1",
+        pid: process.pid,
+        startedAt: Date.now(),
+        authRequired: false,
+      }),
     );
 
     const status = await isServerRunning();

@@ -50,7 +50,10 @@ async function getGitConfig(): Promise<Buffer | null> {
   }
 }
 
-async function getSshKeys(): Promise<Array<{ path: string; content: Buffer }>> {
+async function getSshKeys(): Promise<{
+  files: Array<{ path: string; content: Buffer }>;
+  names: string[];
+}> {
   const sshDir = join(homedir(), ".ssh");
   const filesToCopy = [
     "id_ed25519",
@@ -61,17 +64,19 @@ async function getSshKeys(): Promise<Array<{ path: string; content: Buffer }>> {
     "known_hosts",
   ];
   const results: Array<{ path: string; content: Buffer }> = [];
+  const names: string[] = [];
 
   for (const file of filesToCopy) {
     try {
       const content = await readFile(join(sshDir, file));
       results.push({ path: `/vercel/sandbox/.ssh/${file}`, content });
+      names.push(file);
     } catch {
       // File doesn't exist, skip
     }
   }
 
-  return results;
+  return { files: results, names };
 }
 
 async function getGhAuth(): Promise<{ hostsYml: Buffer; configYml: Buffer | null } | null> {
@@ -132,6 +137,14 @@ async function getClaudeAuth(): Promise<Buffer | null> {
 
 async function getAgentFileContent() {
   const agentPath = fileURLToPath(import.meta.resolve("../dist/agent"));
+  const file = Bun.file(agentPath);
+  if (!(await file.exists())) {
+    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const buildResult = await $`bun --filter @ralphbox/cli build:agent`.cwd(repoRoot).nothrow();
+    if (buildResult.exitCode !== 0) {
+      throw new Error(`Failed to build agent binary (exit ${buildResult.exitCode})`);
+    }
+  }
   return await readFile(agentPath);
 }
 
@@ -167,6 +180,7 @@ export async function runAgent({
   writer.write({ type: "data-sandbox", data: { text: `Writing files to sandbox...` } });
   const filesToWrite: Array<{ path: string; content: Buffer }> = [];
   let hasSshKeys = false;
+  let sshKeyNames: string[] = [];
 
   await Promise.all([
     getCodexAuth().then((buffer) => {
@@ -181,11 +195,12 @@ export async function runAgent({
         filesToWrite.push({ path: "/vercel/sandbox/.claude/.credentials.json", content: buffer });
       }
     }),
-    getSshKeys().then((files) => {
-      if (files.length > 0) {
+    getSshKeys().then((keys) => {
+      if (keys.files.length > 0) {
         writer.write({ type: "data-sandbox", data: { text: `Copying SSH keys...` } });
-        filesToWrite.push(...files);
+        filesToWrite.push(...keys.files);
         hasSshKeys = true;
+        sshKeyNames = keys.names;
       }
     }),
     getGhAuth().then((auth) => {
@@ -234,26 +249,37 @@ export async function runAgent({
       cmd: "chmod",
       args: ["700", "/vercel/sandbox/.ssh"],
     });
-    await sandbox.runCommand({
-      cmd: "chmod",
-      args: ["600", "/vercel/sandbox/.ssh/id_ed25519", "/vercel/sandbox/.ssh/id_rsa"],
-    });
-    await sandbox.runCommand({
-      cmd: "chmod",
-      args: [
-        "644",
-        "/vercel/sandbox/.ssh/id_ed25519.pub",
-        "/vercel/sandbox/.ssh/id_rsa.pub",
-        "/vercel/sandbox/.ssh/config",
-        "/vercel/sandbox/.ssh/known_hosts",
-      ],
-    });
+    const privateKeys = sshKeyNames
+      .filter((name) => name === "id_ed25519" || name === "id_rsa")
+      .map((name) => `/vercel/sandbox/.ssh/${name}`);
+    const publicAndConfig = sshKeyNames
+      .filter(
+        (name) =>
+          name === "id_ed25519.pub" ||
+          name === "id_rsa.pub" ||
+          name === "config" ||
+          name === "known_hosts",
+      )
+      .map((name) => `/vercel/sandbox/.ssh/${name}`);
+
+    if (privateKeys.length > 0) {
+      await sandbox.runCommand({
+        cmd: "chmod",
+        args: ["600", ...privateKeys],
+      });
+    }
+    if (publicAndConfig.length > 0) {
+      await sandbox.runCommand({
+        cmd: "chmod",
+        args: ["644", ...publicAndConfig],
+      });
+    }
   }
 
   const ghCheck = await sandbox.runCommand({ cmd: "which", args: ["gh"] });
   if (ghCheck.exitCode !== 0) {
     writer.write({ type: "data-sandbox", data: { text: `Installing gh CLI...` } });
-    await sandbox.runCommand({
+    const installResult = await sandbox.runCommand({
       cmd: "bash",
       args: [
         "-c",
@@ -261,6 +287,12 @@ export async function runAgent({
       ],
       env: { HOME: "/vercel/sandbox" },
     });
+    if (installResult.exitCode !== 0) {
+      writer.write({
+        type: "data-sandbox",
+        data: { text: `gh CLI install failed with exit code: ${installResult.exitCode}` },
+      });
+    }
   }
 
   writer.write({ type: "data-sandbox", data: { text: `Running agent (${agent})...` } });

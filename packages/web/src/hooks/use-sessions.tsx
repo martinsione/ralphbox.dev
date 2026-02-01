@@ -6,23 +6,39 @@ import type {
   UIMessage,
 } from "@ralphbox/core/types";
 import {
+  createRalphboxClient,
+  normalizeServerUrl,
+  type RalphboxClient,
+} from "@ralphbox/core/client";
+import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { useParams } from "react-router-dom";
 
-const API_URL = "http://localhost:8642";
+const DEFAULT_API_URL = ((import.meta as unknown as { env?: Record<string, string> }).env
+  ?.VITE_RALPHBOX_SERVER_URL ?? "http://localhost:8642") as string;
+const DEFAULT_PASSWORD = (import.meta as unknown as { env?: Record<string, string> }).env
+  ?.VITE_RALPHBOX_SERVER_PASSWORD;
+
+function getApiUrl(): string {
+  if (typeof window === "undefined") return DEFAULT_API_URL;
+  const stored = window.localStorage.getItem("ralphbox.serverUrl");
+  return stored ?? DEFAULT_API_URL;
+}
 
 type EventCallback = (event: BusEvent) => void;
 
 type SessionsContextValue = {
   sessions: SessionSummary[];
   subscribe: (callback: EventCallback) => () => void;
+  client: RalphboxClient;
 };
 
 const SessionsContext = createContext<SessionsContextValue | null>(null);
@@ -30,10 +46,19 @@ const SessionsContext = createContext<SessionsContextValue | null>(null);
 export function SessionsProvider({ children }: { children: ReactNode }): ReactNode {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const listenersRef = useRef<Set<EventCallback>>(new Set());
+  const serverUrl = useMemo(() => normalizeServerUrl(getApiUrl()), []);
+  const client = useMemo(
+    () => createRalphboxClient({ baseUrl: serverUrl, password: DEFAULT_PASSWORD }),
+    [serverUrl],
+  );
 
   async function refreshSessions(): Promise<void> {
-    const res = await fetch(`${API_URL}/api/sessions`);
-    setSessions((await res.json()) as SessionSummary[]);
+    try {
+      const data = await client.sessions.list();
+      setSessions(data);
+    } catch {
+      setSessions([]);
+    }
   }
 
   function subscribe(callback: EventCallback): () => void {
@@ -46,7 +71,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
   }, []);
 
   useEffect(() => {
-    const eventSource = new EventSource(`${API_URL}/events`);
+    const eventSource = client.events.connect();
 
     eventSource.onmessage = (e) => {
       const event = JSON.parse(e.data) as BusEvent;
@@ -60,11 +85,17 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
       }
     };
 
+    eventSource.onerror = () => {
+      // Keep existing sessions list; SSE will auto-reconnect
+    };
+
     return () => eventSource.close();
-  }, []);
+  }, [client]);
 
   return (
-    <SessionsContext.Provider value={{ sessions, subscribe }}>{children}</SessionsContext.Provider>
+    <SessionsContext.Provider value={{ sessions, subscribe, client }}>
+      {children}
+    </SessionsContext.Provider>
   );
 }
 
@@ -110,7 +141,7 @@ export function useSessionStatus(sessionId: string | undefined): StatusMessage |
 
 export function useSession(): Session | null {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const { subscribe } = useSessions();
+  const { subscribe, client } = useSessions();
   const [session, setSession] = useState<Session | null>(null);
   const partsRef = useRef<Map<string, MessagePart>>(new Map());
   const messagesRef = useRef<Map<string, UIMessage>>(new Map());
@@ -120,49 +151,72 @@ export function useSession(): Session | null {
 
     const messages: UIMessage[] = [];
     for (const msg of messagesRef.current.values()) {
-      const parts = Array.from(partsRef.current.values()).filter((p) => p.messageId === msg.id);
+      const parts = Array.from(partsRef.current.values())
+        .filter((p) => p.messageId === msg.id)
+        .sort((a, b) => {
+          const orderA = a.order ?? 0;
+          const orderB = b.order ?? 0;
+          if (orderA !== orderB) return orderA - orderB;
+          const timeA = a.createdAt ?? 0;
+          const timeB = b.createdAt ?? 0;
+          if (timeA !== timeB) return timeA - timeB;
+          return a.id.localeCompare(b.id);
+        });
       messages.push({ ...msg, parts });
     }
+
+    messages.sort((a, b) => {
+      const orderA = a.order ?? 0;
+      const orderB = b.order ?? 0;
+      if (orderA !== orderB) return orderA - orderB;
+      const timeA = a.createdAt ?? 0;
+      const timeB = b.createdAt ?? 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return a.id.localeCompare(b.id);
+    });
 
     return { ...base, messages };
   }, []);
 
   useEffect(() => {
-    if (!sessionId) {
+    const activeSessionId = sessionId;
+    if (!activeSessionId) {
       setSession(null);
       partsRef.current.clear();
       messagesRef.current.clear();
       return;
     }
 
-    async function fetchSession(): Promise<void> {
-      const res = await fetch(`${API_URL}/api/sessions/${sessionId}`);
-      const data = (await res.json()) as Session;
+    async function fetchSession(id: string): Promise<void> {
+      try {
+        const data = await client.sessions.get(id);
+        partsRef.current.clear();
+        messagesRef.current.clear();
 
-      partsRef.current.clear();
-      messagesRef.current.clear();
-
-      for (const msg of data.messages) {
-        messagesRef.current.set(msg.id, msg);
-        for (const part of msg.parts) {
-          partsRef.current.set(part.id, part);
+        for (const msg of data.messages) {
+          messagesRef.current.set(msg.id, msg);
+          for (const part of msg.parts) {
+            partsRef.current.set(part.id, part);
+          }
         }
-      }
 
-      setSession(data);
+        setSession(data);
+      } catch {
+        setSession(null);
+      }
     }
 
-    fetchSession();
+    fetchSession(activeSessionId);
 
     return subscribe((event) => {
-      if (event.type === "message.created" && event.properties.sessionId === sessionId) {
+      if (event.type === "message.created" && event.properties.sessionId === activeSessionId) {
         const { message } = event.properties;
         messagesRef.current.set(message.id, message);
         setSession((prev) => rebuildSession(prev));
         return;
       }
 
-      if (event.type === "part.updated" && event.properties.sessionId === sessionId) {
+      if (event.type === "part.updated" && event.properties.sessionId === activeSessionId) {
         const { part, delta } = event.properties;
         const existing = partsRef.current.get(part.id);
 
@@ -179,8 +233,8 @@ export function useSession(): Session | null {
         return;
       }
 
-      if (event.type === "session.updated" && event.properties.sessionId === sessionId) {
-        fetchSession();
+      if (event.type === "session.updated" && event.properties.sessionId === activeSessionId) {
+        fetchSession(activeSessionId);
       }
     });
   }, [sessionId, subscribe, rebuildSession]);

@@ -58,7 +58,7 @@ export type SessionStatus = "created" | "planning" | "running" | "completed" | "
 export type AgentType = "codex" | "claude";
 
 // Message part types
-type PartBase = { id: string; messageId: string };
+type PartBase = { id: string; messageId: string; createdAt?: number; order?: number };
 
 export type TextPart = PartBase & { type: "text"; text: string };
 export type ReasoningPart = PartBase & { type: "reasoning"; text: string };
@@ -75,6 +75,8 @@ export type UIMessage = {
   id: string;
   role: "user" | "assistant";
   parts: MessagePart[];
+  createdAt?: number;
+  order?: number;
 };
 
 export type Session = {

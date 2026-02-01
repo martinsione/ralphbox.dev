@@ -18,6 +18,13 @@ Fight entropy. Leave the codebase better than you found it.
 - kebab-case filenames
 - composable components over prop drilling
 
+## Architecture Notes
+
+- Prefer `@ralphbox/core/client` over raw `fetch` for API calls.
+- Server defaults to `127.0.0.1`; override with `RALPHBOX_SERVER_HOSTNAME`.
+- Optional auth via `RALPHBOX_SERVER_PASSWORD` (Basic auth or `?token=`).
+- Web client can use `VITE_RALPHBOX_SERVER_URL` and `VITE_RALPHBOX_SERVER_PASSWORD`.
+
 <!-- opensrc:start -->
 
 ## Source Code Reference

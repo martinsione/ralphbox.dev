@@ -7,20 +7,28 @@ const LOCK_FILE = join(RALPHBOX_DIR, "server.lock");
 
 type ServerLock = {
   port: number;
+  hostname: string;
   pid: number;
   startedAt: number;
+  authRequired: boolean;
 };
 
 async function ensureDir(): Promise<void> {
   await mkdir(RALPHBOX_DIR, { recursive: true });
 }
 
-export async function writeLock(port: number): Promise<void> {
+export async function writeLock(
+  port: number,
+  hostname: string = "127.0.0.1",
+  authRequired: boolean = false,
+): Promise<void> {
   await ensureDir();
   const lock: ServerLock = {
     port,
+    hostname,
     pid: process.pid,
     startedAt: Date.now(),
+    authRequired,
   };
   await Bun.write(LOCK_FILE, JSON.stringify(lock));
 }
@@ -58,13 +66,26 @@ export async function isServerRunning(): Promise<
     return { running: false };
   }
 
+  const password = process.env.RALPHBOX_SERVER_PASSWORD;
+  const authHeader = password
+    ? `Basic ${Buffer.from(`ralphbox:${password}`).toString("base64")}`
+    : undefined;
+
+  const hostname = lock.hostname || "127.0.0.1";
+  const checkHost = hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname;
+  const baseUrl = `http://${checkHost}:${lock.port}`;
+
   // Verify server is actually responding
   try {
-    const res = await fetch(`http://localhost:${lock.port}/api/sessions`, {
+    const res = await fetch(`${baseUrl}/api/health`, {
       signal: AbortSignal.timeout(1000),
+      headers: authHeader ? { Authorization: authHeader } : undefined,
     });
     if (res.ok) {
-      return { running: true, url: `http://localhost:${lock.port}` };
+      return { running: true, url: baseUrl };
+    }
+    if (res.status === 401) {
+      return { running: true, url: baseUrl };
     }
     // Server responded but not OK, clean up stale lock
     await removeLock();

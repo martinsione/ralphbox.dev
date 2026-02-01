@@ -6,7 +6,8 @@
     "./session": "./src/session.ts",
     "./bus": "./src/bus.ts",
     "./types": "./src/types.ts",
-    "./server-lock": "./src/server-lock.ts"
+    "./server-lock": "./src/server-lock.ts",
+    "./client": "./src/client.ts"
   },
   "scripts": {
     "test": "bun test",
