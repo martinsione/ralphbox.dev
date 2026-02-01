@@ -5,8 +5,8 @@
   "module": "src/index.ts",
   "scripts": {
     "build:agent": "bun build --compile --target=bun-linux-x64 sandbox/agent.ts --outfile dist/agent",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.68",

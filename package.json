@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "prepare": "git config --local core.hooksPath .githooks",
-    "cli": "bun run --filter @ralphbox/cli build:agent > /dev/null && bun run packages/cli/src/cli.ts",
+    "cli": "bun --filter @ralphbox/cli build:agent && bun --target=bun packages/cli/src/cli.ts",
+    "web": "PORT=8643 bun --filter @ralphbox/web dev",
     "format": "oxfmt .",
     "typecheck": "turbo run typecheck --log-order=grouped",
     "test": "turbo run test --log-order=grouped"

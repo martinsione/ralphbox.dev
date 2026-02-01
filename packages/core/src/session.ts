@@ -1,31 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AgentType, AnyStreamChunk, Session, SessionSummary } from "./types.ts";
+
+export type { Session, SessionSummary };
 
 const STORAGE_DIR = join(homedir(), ".ralphbox");
-
-export type SessionStatus = "created" | "planning" | "running" | "completed" | "failed" | "aborted";
-
-export type TextPart = {
-  type: "text";
-  text: string;
-};
-
-export type UIMessage = {
-  id: string;
-  role: "user" | "assistant";
-  parts: TextPart[];
-};
-
-export type Session = {
-  id: string;
-  status: SessionStatus;
-  agent: "codex" | "claude";
-  sandboxId?: string;
-  createdAt: number;
-  updatedAt: number;
-  messages: UIMessage[];
-};
 
 type StreamState = {
   currentMessageId: string | null;
@@ -48,7 +28,7 @@ function statePath(sessionId: string): string {
   return join(STORAGE_DIR, `${sessionId}.state.json`);
 }
 
-export async function createSession(agent: "codex" | "claude"): Promise<Session> {
+export async function createSession(agent: AgentType): Promise<Session> {
   await ensureStorageDir();
 
   const session: Session = {
@@ -73,7 +53,7 @@ export async function createSession(agent: "codex" | "claude"): Promise<Session>
   return session;
 }
 
-export async function appendChunk(sessionId: string, chunk: any): Promise<void> {
+export async function appendChunk(sessionId: string, chunk: AnyStreamChunk): Promise<void> {
   const path = sessionPath(sessionId);
   const sPath = statePath(sessionId);
 
@@ -160,11 +140,11 @@ export async function getSession(sessionId: string): Promise<Session | null> {
   return JSON.parse(content);
 }
 
-export async function listSessions(): Promise<Omit<Session, "messages">[]> {
+export async function listSessions(): Promise<SessionSummary[]> {
   await ensureStorageDir();
 
   const glob = new Bun.Glob("*.json");
-  const sessions: Omit<Session, "messages">[] = [];
+  const sessions: SessionSummary[] = [];
 
   for await (const file of glob.scan(STORAGE_DIR)) {
     if (file.endsWith(".state.json")) continue;

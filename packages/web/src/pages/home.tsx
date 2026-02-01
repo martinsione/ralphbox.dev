@@ -1,41 +1,20 @@
+import type { Session, SessionSummary } from "@ralphbox/core/types";
 import { useEffect, useState } from "react";
 
-type TextPart = {
-  type: "text";
-  text: string;
-};
-
-type UIMessage = {
-  id: string;
-  role: "user" | "assistant";
-  parts: TextPart[];
-};
-
-type SessionSummary = {
-  id: string;
-  status: string;
-  agent: string;
-  sandboxId?: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
-type Session = SessionSummary & {
-  messages: UIMessage[];
-};
+const API_URL = "http://localhost:8642";
 
 export function Home() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<Session | null>(null);
 
   useEffect(() => {
-    fetch("/api/sessions")
+    fetch(`${API_URL}/api/sessions`)
       .then((r) => r.json())
       .then(setSessions);
   }, []);
 
   const loadSession = async (id: string) => {
-    const res = await fetch(`/api/sessions/${id}`);
+    const res = await fetch(`${API_URL}/api/sessions/${id}`);
     const session = await res.json();
     setSelected(session);
   };

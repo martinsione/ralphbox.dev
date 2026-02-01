@@ -4,27 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "PORT=8642 bun --hot src/server.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "bun run build.ts"
+    "dev": "bun --hot src/index.html",
+    "build": "bun run build.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/react": "3.0.68",
-    "@ralphbox/core": "workspace:*",
-    "ai": "6.0.66",
-    "bun-plugin-tailwind": "0.1.2",
-    "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "0.563.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "tailwind-merge": "3.4.0",
-    "zod": "4.3.6"
+    "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
     "@types/bun": "1.3.8",
     "@types/react": "19.2.10",
     "@types/react-dom": "19.2.3",
+    "bun-plugin-tailwind": "0.1.2",
     "tailwindcss": "4.1.18",
     "tw-animate-css": "1.4.0",
     "typescript": "5.9.3"

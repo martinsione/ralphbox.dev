@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./bus": "./src/bus.ts",
+    "./types": "./src/types.ts"
   },
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
