@@ -12,7 +12,7 @@ echo "Typechecking..."
 bun run typecheck || exit 1
 
 # Test
-echo "Typechecking..."
+echo "Running tests..."
 bun run test || exit 1
 
 echo "All checks passed!"

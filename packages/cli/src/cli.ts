@@ -10,29 +10,107 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
 
 import { parseCliArgs } from "./args";
+import {
+  CodexAuthSchema,
+  ClaudeAuthSchema,
+  parseGhToken,
+  injectTokenToHostsYml,
+  createMinimalHostsYml,
+} from "./credentials";
 
-async function getCodexAuth() {
-  const schema = z.object({
-    OPENAI_API_KEY: z.string().nullable(),
-    tokens: z.object({
-      id_token: z.string(),
-      access_token: z.string(),
-      refresh_token: z.string(),
-      account_id: z.string(),
-    }),
-    last_refresh: z.string(),
-  });
-
-  const authPath = join(homedir(), ".codex", "auth.json");
-  const content = await readFile(authPath, "utf-8");
-  const result = schema.safeParse(JSON.parse(content));
-  if (!result.success) {
+async function getCodexAuth(): Promise<Buffer | null> {
+  try {
+    const authPath = join(homedir(), ".codex", "auth.json");
+    const content = await readFile(authPath, "utf-8");
+    const result = CodexAuthSchema.safeParse(JSON.parse(content));
+    if (!result.success) {
+      return null;
+    }
+    return Buffer.from(content, "utf-8");
+  } catch {
     return null;
   }
-  return Buffer.from(content, "utf-8");
+}
+
+async function getGitConfig(): Promise<Buffer | null> {
+  // Copy .gitconfig to preserve user.name and user.email for commits
+  try {
+    return await readFile(join(homedir(), ".gitconfig"));
+  } catch {
+    // Try alternative location
+    try {
+      return await readFile(join(homedir(), ".config", "git", "config"));
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function getSshKeys(): Promise<Array<{ path: string; content: Buffer }>> {
+  // Copy SSH keys to the sandbox for git operations
+  const sshDir = join(homedir(), ".ssh");
+  const filesToCopy = [
+    "id_ed25519",
+    "id_ed25519.pub",
+    "id_rsa",
+    "id_rsa.pub",
+    "config",
+    "known_hosts",
+  ];
+  const results: Array<{ path: string; content: Buffer }> = [];
+
+  for (const file of filesToCopy) {
+    try {
+      const content = await readFile(join(sshDir, file));
+      results.push({ path: `/vercel/sandbox/.ssh/${file}`, content });
+    } catch {
+      // File doesn't exist, skip
+    }
+  }
+
+  return results;
+}
+
+async function getGhAuth(): Promise<{ hostsYml: Buffer; configYml: Buffer | null } | null> {
+  // gh CLI on macOS stores token in keychain, on Linux it's in hosts.yml
+  // We need to extract from keychain and create a hosts.yml with the token embedded
+  try {
+    const tokenResult = await $`security find-generic-password -s "gh:github.com" -w`
+      .nothrow()
+      .text();
+    if (!tokenResult || tokenResult.includes("could not be found")) {
+      return null;
+    }
+
+    const token = parseGhToken(tokenResult);
+
+    // Read existing hosts.yml to get user info
+    const ghConfigDir = join(homedir(), ".config", "gh");
+    let hostsContent: string;
+    try {
+      const existingHosts = await readFile(join(ghConfigDir, "hosts.yml"), "utf-8");
+      hostsContent = injectTokenToHostsYml(existingHosts, token);
+    } catch {
+      hostsContent = createMinimalHostsYml(token);
+    }
+
+    // Try to read config.yml
+    let configYml: Buffer | null = null;
+    try {
+      configYml = await readFile(join(ghConfigDir, "config.yml"));
+    } catch {
+      // config.yml doesn't exist, skip
+    }
+
+    return {
+      hostsYml: Buffer.from(hostsContent, "utf-8"),
+      configYml,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function getClaudeAuth(): Promise<Buffer | null> {
@@ -47,17 +125,7 @@ async function getClaudeAuth(): Promise<Buffer | null> {
       return null;
     }
 
-    const schema = z.object({
-      claudeAiOauth: z.object({
-        accessToken: z.string(),
-        refreshToken: z.string(),
-        expiresAt: z.number(),
-        scopes: z.array(z.string()),
-        subscriptionType: z.string().optional(),
-      }),
-    });
-
-    const parsed = schema.safeParse(JSON.parse(result.trim()));
+    const parsed = ClaudeAuthSchema.safeParse(JSON.parse(result.trim()));
     if (!parsed.success) {
       return null;
     }
@@ -109,6 +177,7 @@ async function runAgent({
 
   writer.write({ type: "data-sandbox", data: { text: `Writing files to sandbox...` } });
   const filesToWrite: Array<{ path: string; content: Buffer }> = [];
+  let hasSshKeys = false;
 
   await Promise.all([
     getCodexAuth().then((buffer) => {
@@ -122,6 +191,31 @@ async function runAgent({
         writer.write({ type: "data-sandbox", data: { text: `Copying Claude credentials...` } });
         // On Linux, Claude Code reads credentials from ~/.claude/.credentials.json
         filesToWrite.push({ path: "/vercel/sandbox/.claude/.credentials.json", content: buffer });
+      }
+    }),
+    getSshKeys().then((files) => {
+      if (files.length > 0) {
+        writer.write({ type: "data-sandbox", data: { text: `Copying SSH keys...` } });
+        filesToWrite.push(...files);
+        hasSshKeys = true;
+      }
+    }),
+    getGhAuth().then((auth) => {
+      if (auth) {
+        writer.write({ type: "data-sandbox", data: { text: `Copying gh CLI credentials...` } });
+        filesToWrite.push({ path: "/vercel/sandbox/.config/gh/hosts.yml", content: auth.hostsYml });
+        if (auth.configYml) {
+          filesToWrite.push({
+            path: "/vercel/sandbox/.config/gh/config.yml",
+            content: auth.configYml,
+          });
+        }
+      }
+    }),
+    getGitConfig().then((buffer) => {
+      if (buffer) {
+        writer.write({ type: "data-sandbox", data: { text: `Copying git config...` } });
+        filesToWrite.push({ path: "/vercel/sandbox/.gitconfig", content: buffer });
       }
     }),
     getAgentFileContent().then((buffer) => {
@@ -138,12 +232,50 @@ async function runAgent({
     stdout: process.stdout,
   });
 
-  if (chmodResult.exitCode != 0) {
+  if (chmodResult.exitCode !== 0) {
     writer.write({
       type: "data-sandbox",
       data: { text: `chmod failed with exit code: ${chmodResult.exitCode}` },
     });
     process.exit(1);
+  }
+
+  // Set proper permissions for SSH keys (required for SSH to work)
+  if (hasSshKeys) {
+    writer.write({ type: "data-sandbox", data: { text: `Setting SSH key permissions...` } });
+    await sandbox.runCommand({
+      cmd: "chmod",
+      args: ["700", "/vercel/sandbox/.ssh"],
+    });
+    await sandbox.runCommand({
+      cmd: "chmod",
+      args: ["600", "/vercel/sandbox/.ssh/id_ed25519", "/vercel/sandbox/.ssh/id_rsa"],
+    });
+    await sandbox.runCommand({
+      cmd: "chmod",
+      args: [
+        "644",
+        "/vercel/sandbox/.ssh/id_ed25519.pub",
+        "/vercel/sandbox/.ssh/id_rsa.pub",
+        "/vercel/sandbox/.ssh/config",
+        "/vercel/sandbox/.ssh/known_hosts",
+      ],
+    });
+  }
+
+  // Install gh CLI if not already present (using binary for speed)
+  const ghCheck = await sandbox.runCommand({ cmd: "which", args: ["gh"] });
+  if (ghCheck.exitCode !== 0) {
+    writer.write({ type: "data-sandbox", data: { text: `Installing gh CLI...` } });
+    // Download and install gh CLI binary directly (faster than apt)
+    await sandbox.runCommand({
+      cmd: "bash",
+      args: [
+        "-c",
+        "curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar xz -C /tmp && sudo mv /tmp/gh_2.63.2_linux_amd64/bin/gh /usr/local/bin/gh",
+      ],
+      env: { HOME: "/vercel/sandbox" },
+    });
   }
 
   writer.write({ type: "data-sandbox", data: { text: `Running agent (${agent})...` } });
@@ -175,7 +307,6 @@ async function main() {
   const stream = createUIMessageStream<UIMessage>({
     execute: async ({ writer }) => {
       await runAgent({
-        sandboxId: "sbx_8XKIb0E6EmVPhAlA9Aq6s1PLuSXV",
         writer,
         agent: args.agent,
         messages: args.messages,

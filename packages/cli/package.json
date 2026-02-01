@@ -4,7 +4,7 @@
   "type": "module",
   "module": "src/index.ts",
   "scripts": {
-    "build:agent": "bun build --compile --target=bun-linux-x64 src/agent.ts --outfile dist/agent",
+    "build:agent": "bun build --compile --target=bun-linux-x64 sandbox/agent.ts --outfile dist/agent",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
