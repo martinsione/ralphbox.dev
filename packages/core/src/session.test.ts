@@ -57,7 +57,14 @@ describe("session", () => {
     expect(updated?.messages).toHaveLength(1);
     expect(updated!.messages[0]!.id).toBe("msg-1");
     expect(updated!.messages[0]!.role).toBe("assistant");
-    expect(updated!.messages[0]!.parts[0]).toEqual({ type: "text", text: "Hello world!" });
+
+    const part = updated!.messages[0]!.parts[0]!;
+    expect(part.type).toBe("text");
+    expect(part.messageId).toBe("msg-1");
+    expect(part.id).toMatch(/^[0-9a-zA-Z]{8}$/);
+    if (part.type === "text") {
+      expect(part.text).toBe("Hello world!");
+    }
   });
 
   test("updateSession updates session fields", async () => {
@@ -92,5 +99,49 @@ describe("session", () => {
     expect(sessions[0]!.id).toBe(s3.id);
     expect(sessions[1]!.id).toBe(s2.id);
     expect(sessions[2]!.id).toBe(s1.id);
+  });
+
+  test("appendChunk handles Claude Code tool chunks", async () => {
+    const session = await createSession("claude");
+
+    // Simulate Claude Code agent tool chunks
+    await appendChunk(session.id, { type: "start", messageId: "msg-1" });
+    await appendChunk(session.id, { type: "text-start", id: "t1" });
+    await appendChunk(session.id, { type: "text-delta", id: "t1", delta: "Let me check. " });
+    await appendChunk(session.id, { type: "text-end", id: "t1" });
+
+    // Tool call using Claude Code chunk types
+    await appendChunk(session.id, {
+      type: "tool-input-available",
+      toolCallId: "tool-1",
+      toolName: "Bash",
+      input: { command: "ls" },
+    });
+    await appendChunk(session.id, {
+      type: "tool-output-available",
+      toolCallId: "tool-1",
+      output: "file1.txt\nfile2.txt",
+    });
+
+    await appendChunk(session.id, { type: "finish" });
+
+    const result = await getSession(session.id);
+    expect(result?.messages).toHaveLength(1);
+    expect(result!.messages[0]!.parts).toHaveLength(2); // text + tool
+
+    const textPart = result!.messages[0]!.parts.find((p) => p.type === "text");
+    expect(textPart?.type).toBe("text");
+    if (textPart?.type === "text") {
+      expect(textPart.text).toBe("Let me check. ");
+    }
+
+    const toolPart = result!.messages[0]!.parts.find((p) => p.type === "tool");
+    expect(toolPart?.type).toBe("tool");
+    if (toolPart?.type === "tool") {
+      expect(toolPart.toolName).toBe("Bash");
+      expect(toolPart.state.status).toBe("completed");
+      expect(toolPart.state.input).toEqual({ command: "ls" });
+      expect(toolPart.state.output).toBe("file1.txt\nfile2.txt");
+    }
   });
 });

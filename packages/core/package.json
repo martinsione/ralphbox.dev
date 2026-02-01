@@ -5,7 +5,8 @@
   "exports": {
     "./session": "./src/session.ts",
     "./bus": "./src/bus.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./server-lock": "./src/server-lock.ts"
   },
   "scripts": {
     "test": "bun test",

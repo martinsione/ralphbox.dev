@@ -6,6 +6,7 @@ const ArgsSchema = z.object({
   agent: z.enum(["codex", "claude"]).default("codex"),
   message: z.string().optional(),
   messages: z.string().optional(),
+  attach: z.string().optional(),
 });
 
 export type Agent = z.infer<typeof ArgsSchema>["agent"];
@@ -13,6 +14,7 @@ export type Agent = z.infer<typeof ArgsSchema>["agent"];
 export type ParsedArgs = {
   agent: Agent;
   messages: ModelMessage[];
+  attach?: string;
 };
 
 export function parseCliArgs(argv?: string[]): ParsedArgs {
@@ -22,6 +24,7 @@ export function parseCliArgs(argv?: string[]): ParsedArgs {
       message: { type: "string" },
       messages: { type: "string", short: "m" },
       agent: { type: "string", short: "a" },
+      attach: { type: "string" },
     },
   });
 
@@ -31,14 +34,14 @@ export function parseCliArgs(argv?: string[]): ParsedArgs {
     process.exit(1);
   }
 
-  const { agent, message, messages } = result.data;
+  const { agent, message, messages, attach } = result.data;
   if (message) {
-    return { agent, messages: [{ role: "user", content: message }] };
+    return { agent, messages: [{ role: "user", content: message }], attach };
   }
 
   if (messages) {
-    return { agent, messages: JSON.parse(messages) as ModelMessage[] };
+    return { agent, messages: JSON.parse(messages) as ModelMessage[], attach };
   }
 
-  return { agent, messages: [] };
+  return { agent, messages: [], attach };
 }

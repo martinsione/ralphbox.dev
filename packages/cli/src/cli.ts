@@ -1,62 +1,37 @@
 import type { Session } from "@ralphbox/core/session";
+import { isServerRunning } from "@ralphbox/core/server-lock";
 import { parseCliArgs } from "./args.ts";
-import { app, startServer } from "./server.ts";
-
-const DEFAULT_SERVER_URL = "http://localhost:8642";
-
-// Check if the server is running
-async function isServerRunning(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${url}/api/sessions`, { method: "HEAD" });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-// Create fetch function - uses HTTP if server is running, otherwise in-process
-async function createFetch(): Promise<{
-  fetch: (url: string, init?: RequestInit) => Promise<Response>;
-  baseUrl: string;
-  mode: "http" | "in-process";
-}> {
-  // Check if server is already running
-  if (await isServerRunning(DEFAULT_SERVER_URL)) {
-    console.log(`Connecting to server at ${DEFAULT_SERVER_URL}`);
-    return {
-      fetch: globalThis.fetch,
-      baseUrl: DEFAULT_SERVER_URL,
-      mode: "http",
-    };
-  }
-
-  // Fall back to in-process (server not running)
-  console.log("No server running, using in-process mode");
-  return {
-    fetch: async (url: string, init?: RequestInit) => {
-      const request = new Request(url, init);
-      return app.fetch(request);
-    },
-    baseUrl: "http://localhost",
-    mode: "in-process",
-  };
-}
+import { startServer } from "./server.ts";
 
 async function runCli() {
   const args = parseCliArgs();
-  const { fetch: apiFetch, baseUrl, mode } = await createFetch();
+
+  // Auto-detect running server, or start one if needed
+  let serverUrl = args.attach;
+  if (!serverUrl) {
+    const serverStatus = await isServerRunning();
+    if (serverStatus.running) {
+      serverUrl = serverStatus.url;
+      console.log(`Connecting to server at ${serverUrl}`);
+    } else {
+      // Start server so web UI can connect
+      const server = await startServer();
+      serverUrl = `http://localhost:${server.port}`;
+      console.log(`Started server at ${serverUrl}`);
+    }
+  }
 
   // Create session via API
-  const createRes = await apiFetch(`${baseUrl}/api/sessions`, {
+  const createRes = await fetch(`${serverUrl}/api/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ agent: args.agent }),
   });
   const session = (await createRes.json()) as Session;
-  console.log(`Session created: ${session.id} (${mode})`);
+  console.log(`Session created: ${session.id}`);
 
   // Run agent via API - streams NDJSON
-  const runRes = await apiFetch(`${baseUrl}/api/sessions/${session.id}/run`, {
+  const runRes = await fetch(`${serverUrl}/api/sessions/${session.id}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

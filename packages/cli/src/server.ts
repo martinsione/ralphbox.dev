@@ -1,5 +1,6 @@
 import type { AgentType } from "@ralphbox/core/types";
 import { publish, subscribe, type BusEvent } from "@ralphbox/core/bus";
+import { writeLock, removeLock } from "@ralphbox/core/server-lock";
 import {
   appendChunk,
   createSession,
@@ -145,12 +146,24 @@ export const app = new Hono()
     });
   });
 
-export function startServer(port: number = DEFAULT_PORT) {
+export async function startServer(port: number = DEFAULT_PORT) {
   const server = Bun.serve({
     port,
     idleTimeout: 0,
     fetch: app.fetch,
   });
+
+  // Write lock file so other processes can discover the server
+  await writeLock(server.port!);
+
+  // Clean up lock file on exit
+  const cleanup = async () => {
+    await removeLock();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
 
   console.log(`Server running at http://localhost:${server.port}`);
   return server;
