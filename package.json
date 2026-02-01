@@ -9,8 +9,8 @@
     "prepare": "git config --local core.hooksPath .githooks",
     "cli": "bun run --filter @ralphbox/cli build:agent > /dev/null && bun run packages/cli/src/cli.ts",
     "format": "oxfmt .",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test"
+    "typecheck": "turbo run typecheck --log-order=grouped",
+    "test": "turbo run test --log-order=grouped"
   },
   "devDependencies": {
     "@types/bun": "1.3.8",

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "PORT=8642 bun --hot src/server.ts",
+    "typecheck": "tsc --noEmit",
     "build": "bun run build.ts"
   },
   "dependencies": {
