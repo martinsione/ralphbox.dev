@@ -1,3 +1,4 @@
+import { createSession, appendChunk, updateSession } from "@ralphbox/core/session";
 import { Sandbox } from "@vercel/sandbox";
 import {
   createUIMessageStream,
@@ -10,7 +11,6 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { parseCliArgs } from "./args";
 import {
   CodexAuthSchema,
@@ -144,6 +144,7 @@ async function getAgentFileContent() {
 
 type UIMessageMetadata = never;
 type UIMessageDataParts = {
+  sessionId: { id: string };
   sandboxId: { id: string; type: "create" | "get" };
   sandbox: { text: string };
 };
@@ -153,11 +154,13 @@ type UIMessage = BaseUIMessage<UIMessageMetadata, UIMessageDataParts, UIMessageT
 const ONE_MINUTE = 60 * 1000;
 
 async function runAgent({
+  sessionId,
   sandboxId,
   writer,
   agent,
   messages,
 }: {
+  sessionId: string;
   sandboxId?: string;
   writer: UIMessageStreamWriter<UIMessage>;
   agent: "codex" | "claude";
@@ -174,6 +177,8 @@ async function runAgent({
     sandbox = await Sandbox.create({ timeout: ONE_MINUTE * 60, runtime: "node24" });
     writer.write({ type: "data-sandboxId", data: { id: sandbox.sandboxId, type: "create" } });
   }
+
+  await updateSession(sessionId, { sandboxId: sandbox.sandboxId });
 
   writer.write({ type: "data-sandbox", data: { text: `Writing files to sandbox...` } });
   const filesToWrite: Array<{ path: string; content: Buffer }> = [];
@@ -288,33 +293,55 @@ async function runAgent({
     detached: true,
   });
 
-  for await (const log of cmd.logs()) {
-    const text = log.data.toString();
-    try {
-      const chunk = JSON.parse(text);
-      writer.write(chunk);
-    } catch {
-      writer.write({ type: "data-sandbox", data: { text } });
-    }
-  }
+  const logStream = new ReadableStream({
+    async start(controller) {
+      for await (const log of cmd.logs()) {
+        const text = log.data.toString();
+        try {
+          controller.enqueue(JSON.parse(text));
+        } catch {
+          controller.enqueue({ type: "data-sandbox", data: { text } });
+        }
+      }
+      controller.close();
+    },
+  });
 
-  writer.write({ type: "data-sandbox", data: { text: `Agent execution successful` } });
+  writer.merge(logStream);
+
   return sandbox;
 }
 
 async function main() {
   const args = parseCliArgs();
+  const session = await createSession(args.agent);
+
   const stream = createUIMessageStream<UIMessage>({
     execute: async ({ writer }) => {
-      await runAgent({
-        writer,
-        agent: args.agent,
-        messages: args.messages,
-      });
+      writer.write({ type: "data-sessionId", data: { id: session.id } });
+      await updateSession(session.id, { status: "running" });
+
+      try {
+        const sandbox = await runAgent({
+          sessionId: session.id,
+          writer,
+          agent: args.agent,
+          messages: args.messages,
+        });
+
+        await updateSession(session.id, {
+          status: "completed",
+          sandboxId: sandbox.sandboxId,
+        });
+      } catch (error) {
+        await updateSession(session.id, { status: "failed" });
+        throw error;
+      }
     },
   });
 
   for await (const chunk of stream) {
+    await appendChunk(session.id, chunk);
     console.log(JSON.stringify(chunk));
   }
 }

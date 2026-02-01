@@ -1,4 +1,9 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "experimentalSortImports": {},
+  "experimentalSortImports": {
+    "newlinesBetween": false,
+  },
+  "experimentalTailwindcss": {
+    "stylesheet": "./packages/web/src/index.css",
+  },
 }

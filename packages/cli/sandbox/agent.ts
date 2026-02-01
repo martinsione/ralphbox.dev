@@ -5,7 +5,6 @@ import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 import { codexCli } from "ai-sdk-provider-codex-cli";
 import { $ } from "bun";
-
 import { parseCliArgs } from "../src/args";
 
 function log(data: Record<string, any>) {
